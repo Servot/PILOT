@@ -81,7 +81,7 @@ class tree(object):
         self.interval = interval
         self.pivot_c = pivot_c
 
-    def nodes_selected(self, depth=None):
+    def nodes_selected(self, depth=None) -> dict[str, int]:
         """
         count the number of models selected in the tree
 
@@ -91,16 +91,16 @@ class tree(object):
             If specified count the number of models until the
             specified depth.
         """
-
+        empty_tree = {"con": 0, "lin": 0, "blin": 0, "pcon": 0, "plin": 0}
         if self.node == "END":
-            return {"con": 0, "lin": 0, "blin": 0, "pcon": 0, "plin": 0}
+            return empty_tree
         elif depth is not None and self.depth == depth + 1:
             # find the first node that reaches depth + 1
-            return {"con": 0, "lin": 0, "blin": 0, "pcon": 0, "plin": 0}
-        nodes_l = self.left.nodes_selected(depth)
+            return empty_tree
+        nodes_l = self.left.nodes_selected(depth) if self.left is not None else empty_tree
         nodes_l[self.node] += 1
         if self.node in ["plin", "pcon"]:
-            nodes_r = self.right.nodes_selected(depth)
+            nodes_r = self.right.nodes_selected(depth) if self.right is not None else empty_tree
             for k in nodes_l.keys():
                 nodes_l[k] += nodes_r[k]
         return nodes_l

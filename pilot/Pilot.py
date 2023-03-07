@@ -1,9 +1,22 @@
 """ This module implements PILOT"""
 import numba as nb
-from numba import jit
 import numpy as np
 import pandas as pd
+
+from typing import Optional
+from numba import jit, objmode
 from .Tree import tree
+
+
+from sklearn.base import BaseEstimator
+
+
+@nb.njit()
+def random_sample(a, k):
+    with objmode(a="int64[:]"):
+        a = np.random.choice(a, size=k, replace=False)
+    return a
+
 
 @nb.njit(parallel=True)
 def isin(a, b):
@@ -72,7 +85,7 @@ def loss_fun(criteria, num, Rss, k):
         )
     )(
         nb.int64[:],
-        nb.types.ListType(nb.types.unicode_type),
+        nb.typeof(["a", "b"]),
         nb.int64,
         nb.int64[:, :],
         nb.float64[:, :],
@@ -81,6 +94,7 @@ def loss_fun(criteria, num, Rss, k):
         nb.int64,
         nb.int64[:],
         nb.int64[:],
+        nb.int64,
     ),
     nopython=True,
 )
@@ -95,6 +109,7 @@ def best_split(
     min_sample_leaf,
     k,
     categorical,
+    max_features_considered,
 ):
     """
     This function finds the best split as well as the linear
@@ -174,7 +189,7 @@ def best_split(
     intercept = np.zeros((l, 2)) * np.nan
 
     # search for the best split among all features, negelecting the indices column
-    for feature_id in range(1, n_features + 1):
+    for feature_id in random_sample(np.arange(1, n_features + 1), max_features_considered):
         # get sorted X, y
         idx = sorted_X_indices[feature_id - 1]
         idx = idx[isin(idx, index)]
@@ -194,9 +209,7 @@ def best_split(
                     [
                         np.sum(X_sorted[:, feature_id]),
                         np.sum(X_sorted[:, feature_id] ** 2),
-                        np.sum(
-                            X_sorted[:, feature_id].copy().reshape(-1, 1) * y_sorted
-                        ),
+                        np.sum(X_sorted[:, feature_id].copy().reshape(-1, 1) * y_sorted),
                         np.sum(y_sorted),
                         np.sum(y_sorted**2),
                     ],
@@ -234,9 +247,7 @@ def best_split(
                 if var == 0:
                     coef_lin = 0
                 else:
-                    coef_lin = (
-                        num[1] * Moments[1, 2] - Moments[1, 0] * Moments[1, 3]
-                    ) / var
+                    coef_lin = (num[1] * Moments[1, 2] - Moments[1, 0] * Moments[1, 3]) / var
                 intercept_lin = (Moments[1, 3] - coef_lin * Moments[1, 0]) / num[1]
                 # compute the RSS and the loss according to the information criterion
                 rss = (
@@ -321,9 +332,7 @@ def best_split(
                     ):
                         coefs = np.linalg.solve(XtX, XtY).flatten()
                         coef[i, :] = np.array([coefs[1], coefs[1] + coefs[2]])
-                        intercept[i, :] = np.array(
-                            [coefs[0], coefs[0] - coefs[2] * pivot]
-                        )
+                        intercept[i, :] = np.array([coefs[0], coefs[0] - coefs[2] * pivot])
                     i += 1
                     pre_pivot = pivot
 
@@ -364,9 +373,9 @@ def best_split(
                     # coef and intercept are vectors of dimension 1
                     # have to reshape X column in order to get correct cross product
                     # the intercept should be divided by the total number of samples
-                    coef[i, :] = (
-                        num * Moments[:, 2] - Moments[:, 0] * Moments[:, 3]
-                    ) / (num * Moments[:, 1] - Moments[:, 0] ** 2)
+                    coef[i, :] = (num * Moments[:, 2] - Moments[:, 0] * Moments[:, 3]) / (
+                        num * Moments[:, 1] - Moments[:, 0] ** 2
+                    )
                     intercept[i, :] = (Moments[:, 3] - coef[i, :] * Moments[:, 0]) / num
 
                 # compute the rss and loss of the above 3 methods
@@ -387,14 +396,10 @@ def best_split(
                 rss = np.maximum(10**-8, rss)
                 loss = loss_fun(criteria=split_criterion, num=num.sum(), Rss=rss, k=k)
 
-                if ~np.isnan(loss).all() and (
-                    best_node == "" or np.nanmin(loss) < best_loss
-                ):
+                if ~np.isnan(loss).all() and (best_node == "" or np.nanmin(loss) < best_loss):
                     best_loss = np.nanmin(loss)
                     index_min = np.where(loss == best_loss)[0].item()
-                    add_index = 1 * ("lin" in regression_nodes) + 1 * (
-                        "con" in regression_nodes
-                    )
+                    add_index = 1 * ("lin" in regression_nodes) + 1 * ("con" in regression_nodes)
                     best_node = regression_nodes[add_index + index_min]
                     best_feature = feature_id  # asigned but will not be used for 'lin'
                     interval = np.array([possible_p[0], possible_p[-1]])
@@ -451,7 +456,7 @@ def best_split(
     return best_feature, best_pivot, best_node, lm_L, lm_R, interval, pivot_c
 
 
-class PILOT(object):
+class PILOT(BaseEstimator):
     """
     This is an implementation of the PILOT method.
 
@@ -497,6 +502,8 @@ class PILOT(object):
         min_sample_split=10,
         min_sample_leaf=5,
         step_size=1,
+        random_state=42,
+        truncation_factor: int = 3,
     ) -> None:
         """
         Here we input model parameters to build a tree,
@@ -517,6 +524,11 @@ class PILOT(object):
             to be at a leaf node.
         step_size: int,
             boosting step size.
+        random_state: int,
+            Not used, added for compatibility with sklearn framework
+        truncation_factor: float,
+            By default, predictions are truncated at [-3B, 3B] where B = y_max = -y_min for centered data.
+            The multiplyer (3 by default) can be adapted.
         """
 
         # initialize class attributes
@@ -526,6 +538,8 @@ class PILOT(object):
         self.min_sample_split = min_sample_split
         self.min_sample_leaf = min_sample_leaf
         self.step_size = step_size
+        self.random_state = random_state
+        self.truncation_factor = truncation_factor
 
         # attributes used for fitting
         self.X = None
@@ -534,10 +548,12 @@ class PILOT(object):
         self.sorted_X_indices = None
         self.ymean = None
         self.n_features = None
+        self.max_features_considered = None
         self.categorical = np.array([-1])
         self.model_tree = None
         self.B1 = None
         self.B2 = None
+        self.recursion_counter = {"lin": 0, "blin": 0, "pcon": 0, "plin": 0, "pconc": 0}
 
         rule = {"con": 0, "lin": 1, "blin": 2, "pcon": 3, "plin": 4}
         self.regression_nodes.sort(key=lambda x: rule[x])
@@ -548,7 +564,6 @@ class PILOT(object):
             [k[key] for key in self.regression_nodes if key not in ["con", "lin"]],
             dtype=np.int64,
         )
-        self.regression_nodes = nb.typed.List(self.regression_nodes)
 
     def stop_criterion(self, tree_depth, y):
         """
@@ -612,11 +627,12 @@ class PILOT(object):
             self.min_sample_leaf,
             self.k,
             self.categorical,
+            self.max_features_considered,
         )  # find the best split
         # stop fitting the tree
         if best_node == "":
             return tree(node="END", Rt=rss)
-        elif best_node in ["lin", "con"]:
+        elif best_node in ["con", "lin"]:
             # do not include 'lin' and 'con' in the depth calculation
             tree_depth -= 1
 
@@ -638,6 +654,7 @@ class PILOT(object):
 
             # update X and y by vectorization, reshape them to make sure their sizes are correct
             if best_node == "lin":
+                rss_previous = np.sum(self.y[indices] ** 2)
                 # unpdate y
                 raw_res = self.y[indices] - self.step_size * (
                     lm_l[0] * self.X[indices, best_feature].reshape(-1, 1) + lm_l[1]
@@ -646,15 +663,20 @@ class PILOT(object):
                 self.y[indices] = self.y0[indices] - np.maximum(
                     np.minimum(self.y0[indices] - raw_res, self.B1), self.B2
                 )
+                rss_new = np.sum(self.y[indices] ** 2)
+                improvement = (rss_previous - rss_new) / rss_previous
+                if improvement < 0.05:
+                    node.left = tree(node="END", Rt=np.sum(self.y[indices] ** 2))
+                    return node
 
-                # recursion
-                node.left = self.build_tree(
-                    tree_depth,
-                    indices,
-                    np.maximum(
-                        0, np.sum((self.y[indices] - np.mean(self.y[indices])) ** 2)
-                    ),
-                )
+                else:
+                    self.recursion_counter[best_node] += 1
+                    # recursion
+                    node.left = self.build_tree(
+                        tree_depth,
+                        indices,
+                        np.maximum(0, np.sum((self.y[indices] - np.mean(self.y[indices])) ** 2)),
+                    )
 
             elif best_node == "con":
                 self.y[indices] -= self.step_size * (lm_l[1])
@@ -675,47 +697,42 @@ class PILOT(object):
                 # compute the raw and truncated predicrtion
                 rawres_left = (
                     self.y[indices_left]
-                    - (
-                        lm_l[0] * self.X[indices_left, best_feature].reshape(-1, 1)
-                        + lm_l[1]
-                    )
+                    - (lm_l[0] * self.X[indices_left, best_feature].reshape(-1, 1) + lm_l[1])
                 ).copy()
                 self.y[indices_left] = self.y0[indices_left] - np.maximum(
                     np.minimum(self.y0[indices_left] - rawres_left, self.B1), self.B2
                 )
                 rawres_right = (
                     self.y[indices_right]
-                    - (
-                        lm_r[0] * self.X[indices_right, best_feature].reshape(-1, 1)
-                        + lm_r[1]
-                    )
+                    - (lm_r[0] * self.X[indices_right, best_feature].reshape(-1, 1) + lm_r[1])
                 ).copy()
                 self.y[indices_right] = self.y0[indices_right] - np.maximum(
                     np.minimum(self.y0[indices_right] - rawres_right, self.B1), self.B2
                 )
 
                 # recursion
-                node.left = self.build_tree(
-                    tree_depth,
-                    indices_left,
-                    np.maximum(
-                        0,
-                        np.sum(
-                            (self.y[indices_left] - np.mean(self.y[indices_left])) ** 2
+                try:
+                    self.recursion_counter[best_node] += 1
+                    node.left = self.build_tree(
+                        tree_depth,
+                        indices_left,
+                        np.maximum(
+                            0,
+                            np.sum((self.y[indices_left] - np.mean(self.y[indices_left])) ** 2),
                         ),
-                    ),
-                )
-                node.right = self.build_tree(
-                    tree_depth,
-                    indices_right,
-                    np.maximum(
-                        0,
-                        np.sum(
-                            (self.y[indices_right] - np.mean(self.y[indices_right]))
-                            ** 2
+                    )
+
+                    node.right = self.build_tree(
+                        tree_depth,
+                        indices_right,
+                        np.maximum(
+                            0,
+                            np.sum((self.y[indices_right] - np.mean(self.y[indices_right])) ** 2),
                         ),
-                    ),
-                )
+                    )
+                except RecursionError as re:
+                    print(tree_depth, best_node, node.nodes_selected(), self.recursion_counter)
+                    raise Exception from re
 
         else:
             # stop recursion if meeting the stopping criterion
@@ -723,7 +740,14 @@ class PILOT(object):
 
         return node
 
-    def fit(self, X, y, categorical=np.array([-1])):
+    def fit(
+        self,
+        X,
+        y,
+        categorical=np.array([-1]),
+        max_features_considered: Optional[int] = None,
+        **kwargs
+    ):
         """
         This function is used for model fitting. It should return
         a pruned tree, which includes the location of each node
@@ -736,9 +760,8 @@ class PILOT(object):
             The predictors.
         y: Array-like objects, usually pandas.DataFrame or numpy arrays.
             The responses.
-        categorical: ndarray,
-            1D array of column indices of categorical variables.
-            We assume that they are integer valued.
+        categorical: An array of column indices of categorical variables.
+                     We assume that they are integer valued.
 
         return:
         -------
@@ -759,6 +782,11 @@ class PILOT(object):
 
         # define class attributes
         self.n_features = X.shape[1]
+        self.max_features_considered = (
+            min(max_features_considered, self.n_features)
+            if max_features_considered is not None
+            else self.n_features
+        )
         n_samples = X.shape[0]
         self.categorical = categorical
 
@@ -779,17 +807,12 @@ class PILOT(object):
         # y should be remembered and modified during 'boosting'
         self.y = y.copy()  # calculate on y directly to save memory
         self.y0 = y.copy()  # for the truncation procudure
-        self.B1 = (
-            2 * y.max() - y.min()
-        )  # compute the upper bound for the first truncation
-        self.B2 = (
-            -y.max() + 2 * y.min()
-        )  # compute the lower bound for the second truncation
+        padding = (self.truncation_factor - 1) * ((y.max() - y.min()) / 2)
+        self.B1 = y.max() + padding  # compute the upper bound for the first truncation
+        self.B2 = y.min() - padding  # compute the lower bound for the second truncation
 
         # build the tree, only need to take in the indices for X
-        self.model_tree = self.build_tree(
-            -1, self.sorted_X_indices[0], np.sum((y - y.mean()) ** 2)
-        )
+        self.model_tree = self.build_tree(-1, self.sorted_X_indices[0], np.sum((y - y.mean()) ** 2))
 
         # if the first node is 'con'
         if self.model_tree.node == "END":
@@ -797,43 +820,40 @@ class PILOT(object):
 
         return
 
-    def predict(self, model=None, x=None, maxd=np.inf):
+    def predict(self, X, model=None, maxd=np.inf, **kwargs):
         """
         This function is used for model predicting. Given a dataset,
         it will find its location and respective linear model.
 
         parameters:
         -----------
-        model: The tree objects,
-            by default we use the model tree fit on the data.
-        x: Array-like objects, pandas.DataFrame or numpy arrays,
-            new sample need to be predicted
-        maxd: int,
-          the maximum depth to be considered for prediction,
-          can be less than the true depth of the tree.
+        model: The tree objects
+        x: Array-like objects, new sample need to be predicted
+        maxd: The maximum depth to be considered for prediction,
+              can be less than the true depth of the tree.
 
         return:
         -------
-        y_hat: ndarray,
+        y_hat: numpy.array
                the predicted y values
         """
         y_hat = []
         if model is None:
             model = self.model_tree
 
-        if isinstance(x, pd.core.frame.DataFrame):
-            x = np.array(x)
+        if isinstance(X, pd.core.frame.DataFrame):
+            X = np.array(X)
 
         if self.model_tree.node == "END":
-            return np.ones(x.shape[0]) * self.ymean
+            return np.ones(X.shape[0]) * self.ymean
 
-        for row in range(x.shape[0]):
+        for row in range(X.shape[0]):
             t = model
             y_hat_one = 0
             while t.node != "END" and t.depth < maxd:
 
                 if t.node == "pconc":
-                    if np.isin(x[row, t.pivot[0]], t.pivot_c):
+                    if np.isin(X[row, t.pivot[0]], t.pivot_c):
                         y_hat_one += self.step_size * (t.lm_l[1])
                         t = t.left
                     else:
@@ -841,14 +861,14 @@ class PILOT(object):
                         t = t.right
 
                 # go left if 'lin'
-                elif t.node in ["lin", "con"] or x[row, t.pivot[0]] <= t.pivot[1]:
+                elif t.node in ["lin", "con"] or X[row, t.pivot[0]] <= t.pivot[1]:
                     if t.node == "lin":
                         # truncate both on the left and the right
                         y_hat_one += self.step_size * (
                             t.lm_l[0]
                             * np.min(
                                 [
-                                    np.max([x[row, t.pivot[0]], t.interval[0]]),
+                                    np.max([X[row, t.pivot[0]], t.interval[0]]),
                                     t.interval[1],
                                 ]
                             )
@@ -857,15 +877,13 @@ class PILOT(object):
                     else:
                         # truncate on the left
                         y_hat_one += self.step_size * (
-                            t.lm_l[0] * np.max([x[row, t.pivot[0]], t.interval[0]])
-                            + t.lm_l[1]
+                            t.lm_l[0] * np.max([X[row, t.pivot[0]], t.interval[0]]) + t.lm_l[1]
                         )
                     t = t.left
 
                 else:
                     y_hat_one += self.step_size * (
-                        t.lm_r[0] * np.min([x[row, t.pivot[0]], t.interval[1]])
-                        + t.lm_r[1]
+                        t.lm_r[0] * np.min([X[row, t.pivot[0]], t.interval[1]]) + t.lm_r[1]
                     )
                     t = t.right
 
@@ -878,33 +896,40 @@ class PILOT(object):
             y_hat.append(y_hat_one)
         return np.array(y_hat)
 
-    def print_tree(self, model_tree, level):
+    def print_tree(self, level: int = 2):
         """
         A function for tree visualization
 
         parameters:
         -----------
         """
-        if model_tree is not None:
-            self.print_tree(model_tree.left, level + 1)
-            if model_tree.node == "lin":
-                print(
-                    " " * 8 * level + "-->",
-                    model_tree.node,
-                    (round(model_tree.pivot[0], 3)),
-                    round(model_tree.Rt, 3),
-                    (round(model_tree.lm_l[0], 3), round(model_tree.lm_l[1], 3)),
-                    None,
-                )
-            elif model_tree.node == "END":
-                print(" " * 8 * level + "-->" + "END", round(model_tree.Rt, 3))
-            else:
-                print(
-                    " " * 8 * level + "-->",
-                    model_tree.node,
-                    (round(model_tree.pivot[0], 3), round(model_tree.pivot[1], 3)),
-                    round(model_tree.Rt, 3),
-                    (round(model_tree.lm_l[0], 3), round(model_tree.lm_l[1], 3)),
-                    (round(model_tree.lm_r[0], 3), round(model_tree.lm_r[1], 3)),
-                )
-            self.print_tree(model_tree.right, level + 1)
+        print_tree_inner_function(self.model_tree, level=level)
+
+    def _validate_X_predict(self, X, *args, **kwargs):
+        return X
+
+
+def print_tree_inner_function(model_tree: tree, level: int) -> None:
+    if model_tree is not None:
+        print_tree_inner_function(model_tree.left, level + 1)
+        if model_tree.node == "lin":
+            print(
+                " " * 8 * level + "-->",
+                model_tree.node,
+                (round(model_tree.pivot[0], 3)),
+                round(model_tree.Rt, 3),
+                (round(model_tree.lm_l[0], 3), round(model_tree.lm_l[1], 3)),
+                None,
+            )
+        elif model_tree.node == "END":
+            print(" " * 8 * level + "-->" + "END", round(model_tree.Rt, 3))
+        else:
+            print(
+                " " * 8 * level + "-->",
+                model_tree.node,
+                (round(model_tree.pivot[0], 3), round(model_tree.pivot[1], 3)),
+                round(model_tree.Rt, 3),
+                (round(model_tree.lm_l[0], 3), round(model_tree.lm_l[1], 3)),
+                (round(model_tree.lm_r[0], 3), round(model_tree.lm_r[1], 3)),
+            )
+        print_tree_inner_function(model_tree.right, level + 1)
