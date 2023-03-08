@@ -504,6 +504,7 @@ class PILOT(BaseEstimator):
         step_size=1,
         random_state=42,
         truncation_factor: int = 3,
+        rel_tolerance: float = 0,
     ) -> None:
         """
         Here we input model parameters to build a tree,
@@ -529,6 +530,9 @@ class PILOT(BaseEstimator):
         truncation_factor: float,
             By default, predictions are truncated at [-3B, 3B] where B = y_max = -y_min for centered data.
             The multiplyer (3 by default) can be adapted.
+        rel_tolerance: float,
+            Minimum percentage decrease in RSS in order for a linear node to be added (if 0, there is no restriction on the number of linear nodes).
+            Used to avoid recursion errors.
         """
 
         # initialize class attributes
@@ -540,6 +544,7 @@ class PILOT(BaseEstimator):
         self.step_size = step_size
         self.random_state = random_state
         self.truncation_factor = truncation_factor
+        self.rel_tolerance = rel_tolerance
 
         # attributes used for fitting
         self.X = None
@@ -665,7 +670,7 @@ class PILOT(BaseEstimator):
                 )
                 rss_new = np.sum(self.y[indices] ** 2)
                 improvement = (rss_previous - rss_new) / rss_previous
-                if improvement < 0.05:
+                if improvement < self.rel_tolerance:
                     node.left = tree(node="END", Rt=np.sum(self.y[indices] ** 2))
                     return node
 
