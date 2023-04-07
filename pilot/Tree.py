@@ -1,4 +1,7 @@
 """ This is an implementation of the tree data structure"""
+from __future__ import annotations
+
+
 class tree(object):
     """
     We use a tree object to save the PILOT model.
@@ -104,3 +107,14 @@ class tree(object):
             for k in nodes_l.keys():
                 nodes_l[k] += nodes_r[k]
         return nodes_l
+
+    @staticmethod
+    def get_depth(model_tree):
+        depth = model_tree.depth
+        left = model_tree.left
+        right = model_tree.right
+        if left is not None and left.node != "END":
+            depth = tree.get_depth(left)
+        if right is not None and right.node != "END":
+            depth = max(depth, tree.get_depth(right))
+        return depth

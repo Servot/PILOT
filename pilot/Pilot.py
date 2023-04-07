@@ -565,6 +565,7 @@ class PILOT(BaseEstimator):
         self.B1 = None
         self.B2 = None
         self.recursion_counter = {"lin": 0, "blin": 0, "pcon": 0, "plin": 0, "pconc": 0}
+        self.tree_depth = 0
 
         rule = {"con": 0, "lin": 1, "blin": 2, "pcon": 3, "plin": 4}
         self.regression_nodes.sort(key=lambda x: rule[x])
@@ -646,6 +647,8 @@ class PILOT(BaseEstimator):
         elif best_node in ["con", "lin"]:
             # do not include 'lin' and 'con' in the depth calculation
             tree_depth -= 1
+
+        self.tree_depth = max(self.tree_depth, tree_depth)
 
         # build tree only if it doesn't meet the stop_criterion
         if self.stop_criterion(tree_depth, self.y[indices]):
