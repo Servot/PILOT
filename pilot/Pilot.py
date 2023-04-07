@@ -1,4 +1,10 @@
 """ This module implements PILOT"""
+import warnings
+from numba.core.errors import NumbaDeprecationWarning, NumbaPendingDeprecationWarning
+
+warnings.simplefilter("ignore", category=NumbaDeprecationWarning)
+warnings.simplefilter("ignore", category=NumbaPendingDeprecationWarning)
+
 import numba as nb
 import numpy as np
 import pandas as pd
