@@ -18,6 +18,7 @@ class RandomForestPilot(BaseEstimator):
         truncation_factor: int = 3,
         n_features: float | str = 1.0,
         rel_tolerance: float = 0,
+        df_settings: dict[str, int] | None = None,
     ):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
@@ -29,17 +30,19 @@ class RandomForestPilot(BaseEstimator):
         self.truncation_factor = truncation_factor
         self.n_features = n_features
         self.rel_tolerance = rel_tolerance
+        self.df_settings = df_settings
 
     def fit(self, X, y, categorical_idx=np.array([-1]), n_workers: int = 1):
         self.estimators = [
             Pilot.PILOT(
-                self.max_depth,
-                self.split_criterion,
-                self.min_sample_split,
-                self.min_sample_leaf,
-                self.step_size,
+                max_depth=self.max_depth,
+                split_criterion=self.split_criterion,
+                min_sample_split=self.min_sample_split,
+                min_sample_leaf=self.min_sample_leaf,
+                step_size=self.step_size,
                 truncation_factor=self.truncation_factor,
                 rel_tolerance=self.rel_tolerance,
+                df_settings=self.df_settings,
             )
             for _ in range(self.n_estimators)
         ]

@@ -16,6 +16,9 @@ from .Tree import tree
 
 from sklearn.base import BaseEstimator
 
+NODE_PREFERENCE_ORDER = ["con", "lin", "blin", "pcon", "plin", "pconc"]
+DEFAULT_DF_SETTINGS = {"con": 1, "lin": 2, "blin": 5, "pcon": 5, "plin": 2, "pconc": 5}
+
 
 @nb.njit()
 def random_sample(a, k):
@@ -49,7 +52,7 @@ def isin(a, b):
 
 
 @jit(nb.float64[:](nb.types.unicode_type, nb.int64, nb.float64[:], nb.int64[:]))
-def loss_fun(criteria, num, Rss, k):
+def loss_fun(criteria, num, Rss, k: np.ndarray):
     """
     This function is used to compute the information criteria
 
@@ -90,17 +93,20 @@ def loss_fun(criteria, num, Rss, k):
             nb.int64[:],
         )
     )(
-        nb.int64[:],
-        nb.typeof(["a", "b"]),
-        nb.int64,
-        nb.int64[:, :],
-        nb.float64[:, :],
-        nb.float64[:, :],
-        nb.types.unicode_type,
-        nb.int64,
-        nb.int64[:],
-        nb.int64[:],
-        nb.int64,
+        nb.int64[:],  # index
+        nb.typeof(["a", "b"]),  # regression_nodes
+        nb.int64,  # n_features
+        nb.int64[:, :],  # sorted_X_indices
+        nb.float64[:, :],  # X
+        nb.float64[:, :],  # y
+        nb.types.unicode_type,  # split_criterion
+        nb.int64,  # min_sample_leaf
+        nb.int64[:],  # k_con
+        nb.int64[:],  # k_lin
+        nb.int64[:],  # k_split_nodes
+        nb.int64[:],  # k_pconc
+        nb.int64[:],  # categorical
+        nb.int64,  # max_features_considered
     ),
     nopython=True,
 )
@@ -113,7 +119,10 @@ def best_split(
     y,
     split_criterion,
     min_sample_leaf,
-    k,
+    k_con,
+    k_lin,
+    k_split_nodes,
+    k_pconc,
     categorical,
     max_features_considered,
 ):
@@ -143,8 +152,8 @@ def best_split(
     min_sample_leaf: int,
         the minimal number of samples required
         to be at a leaf node
-    k: ndarray,
-        1D int array, the degrees of freedom for 'pcon'/'blin'/'plin'.
+    k_*: ndarray
+        degrees of freedom for each regression node
     categorical: ndarray,
         1D int array, the columns of categorical variable, array.
 
@@ -236,7 +245,7 @@ def best_split(
                     criteria=split_criterion,
                     num=num[1],
                     Rss=np.array([rss]),
-                    k=np.array([1], dtype=np.int64),
+                    k=k_con,
                 )
                 # update best_loss immediately
                 if best_node == "" or loss.item() < best_loss:
@@ -268,7 +277,7 @@ def best_split(
                     criteria=split_criterion,
                     num=num[1],
                     Rss=np.array([rss]),
-                    k=np.array([2], dtype=np.int64),
+                    k=k_lin,
                 )
                 # update best_loss immediately
                 if best_loss == "" or loss.item() < best_loss:
@@ -339,7 +348,7 @@ def best_split(
                         coefs = np.linalg.solve(XtX, XtY).flatten()
                         coef[i, :] = np.array([coefs[1], coefs[1] + coefs[2]])
                         intercept[i, :] = np.array([coefs[0], coefs[0] - coefs[2] * pivot])
-                    i += 1
+                    i += 1  # we add a dimension to the coef and intercept arrays
                     pre_pivot = pivot
 
                 # update num after blin is fitted
@@ -367,7 +376,7 @@ def best_split(
                 if "pcon" in regression_nodes:
                     coef[i, :] = np.array([0, 0])
                     intercept[i, :] = (Moments[:, 3]) / num
-                    i += 1
+                    i += 1  # we add a dimension to the coef and intercept arrays
 
                 # 'plin' for the first split candidate is equivalent to 'pcon'
                 if (
@@ -385,6 +394,7 @@ def best_split(
                     intercept[i, :] = (Moments[:, 3] - coef[i, :] * Moments[:, 0]) / num
 
                 # compute the rss and loss of the above 3 methods
+                # The dimension rss is between 1 and 3 (depending on the regression_nodes)
                 rss = (
                     Moments[:, 4]
                     + (num * intercept**2)
@@ -400,7 +410,12 @@ def best_split(
 
                 # update the best loss
                 rss = np.maximum(10**-8, rss)
-                loss = loss_fun(criteria=split_criterion, num=num.sum(), Rss=rss, k=k)
+                loss = loss_fun(
+                    criteria=split_criterion,
+                    num=num.sum(),
+                    Rss=rss,
+                    k=k_split_nodes,
+                )
 
                 if ~np.isnan(loss).all() and (best_node == "" or np.nanmin(loss) < best_loss):
                     best_loss = np.nanmin(loss)
@@ -448,7 +463,7 @@ def best_split(
                 criteria=split_criterion,
                 num=num.sum(),
                 Rss=np.array([rss]),
-                k=np.array([5], dtype=np.int64),
+                k=k_pconc,
             )
             if best_node == "" or loss.item() < best_loss:
                 best_feature = feature_id
@@ -511,6 +526,7 @@ class PILOT(BaseEstimator):
         random_state=42,
         truncation_factor: int = 3,
         rel_tolerance: float = 0,
+        df_settings: dict[str, int] | None = None,
     ) -> None:
         """
         Here we input model parameters to build a tree,
@@ -536,6 +552,8 @@ class PILOT(BaseEstimator):
         truncation_factor: float,
             By default, predictions are truncated at [-3B, 3B] where B = y_max = -y_min for centered data.
             The multiplyer (3 by default) can be adapted.
+        df_settings:
+            Mapping from regression node type to the number of degrees of freedom for that node type.
         rel_tolerance: float,
             Minimum percentage decrease in RSS in order for a linear node to be added (if 0, there is no restriction on the number of linear nodes).
             Used to avoid recursion errors.
@@ -567,15 +585,25 @@ class PILOT(BaseEstimator):
         self.recursion_counter = {"lin": 0, "blin": 0, "pcon": 0, "plin": 0, "pconc": 0}
         self.tree_depth = 0
 
-        rule = {"con": 0, "lin": 1, "blin": 2, "pcon": 3, "plin": 4}
-        self.regression_nodes.sort(key=lambda x: rule[x])
-        df = [5, 5, 7]
-        k = {"blin": df[0], "pcon": df[1], "plin": df[2]}
-        # used to store the degrees of freedom
-        self.k = np.array(
-            [k[key] for key in self.regression_nodes if key not in ["con", "lin"]],
-            dtype=np.int64,
+        # order of preference for regression nodes
+        # this cannot be changed as best split relies on this specific order
+        self.regression_nodes = [
+            node for node in NODE_PREFERENCE_ORDER if node in self.regression_nodes
+        ]
+
+        # degrees of freedom for each regression node
+        self.k = DEFAULT_DF_SETTINGS
+        if df_settings is not None:
+            self.k.update(df_settings)
+
+        # df need to be stored as separate numpy arrays for numba
+        self.k = {k: np.array([v], dtype=np.int64) for k, v in self.k.items()}
+        self.k_con = self.k["con"]
+        self.k_lin = self.k["lin"]
+        self.k_split_nodes = np.concatenate(
+            [self.k[node] for node in self.regression_nodes if node in ["blin", "pcon", "plin"]]
         )
+        self.k_pconc = self.k["pconc"]
 
     def stop_criterion(self, tree_depth, y):
         """
@@ -637,7 +665,10 @@ class PILOT(BaseEstimator):
             self.y,
             self.split_criterion,
             self.min_sample_leaf,
-            self.k,
+            self.k_con,
+            self.k_lin,
+            self.k_split_nodes,
+            self.k_pconc,
             self.categorical,
             self.max_features_considered,
         )  # find the best split
