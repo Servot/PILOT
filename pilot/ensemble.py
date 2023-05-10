@@ -19,6 +19,7 @@ class RandomForestPilot(BaseEstimator):
         n_features: float | str = 1.0,
         rel_tolerance: float = 0,
         df_settings: dict[str, int] | None = None,
+        regression_nodes: list[str] | None = None,
     ):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
@@ -31,6 +32,7 @@ class RandomForestPilot(BaseEstimator):
         self.n_features = n_features
         self.rel_tolerance = rel_tolerance
         self.df_settings = df_settings
+        self.regression_nodes = regression_nodes
 
     def fit(self, X, y, categorical_idx=np.array([-1]), n_workers: int = 1):
         self.estimators = [
@@ -43,6 +45,7 @@ class RandomForestPilot(BaseEstimator):
                 truncation_factor=self.truncation_factor,
                 rel_tolerance=self.rel_tolerance,
                 df_settings=self.df_settings,
+                regression_nodes=self.regression_nodes,
             )
             for _ in range(self.n_estimators)
         ]

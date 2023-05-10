@@ -101,7 +101,7 @@ class tree(object):
             If specified count the number of models until the
             specified depth.
         """
-        empty_tree = {"con": 0, "lin": 0, "blin": 0, "pcon": 0, "plin": 0}
+        empty_tree = {"con": 0, "lin": 0, "blin": 0, "pcon": 0, "plin": 0, "pconc": 0}
         if self.node == "END":
             return empty_tree
         elif depth is not None and self.depth == depth + 1:
@@ -157,12 +157,17 @@ def construct_graph(
             interval=model_tree.interval,
             pivot_c=model_tree.pivot_c,
             samples_remaining=len(training_data),
+            n_unique=len(training_data),
         )
     left_data, right_data = _get_child_data(training_data, model_tree)
     if model_tree.left is not None:
-        left_id = str(uuid.uuid4().fields[-1])[-5:]
+        left_id = str(uuid.uuid4().fields[-1])[-6:]
         post_fix = f"_{model_tree.left.depth}" if model_tree.left.depth is not None else ""
-
+        n_unique = (
+            len(np.unique(left_data[:, model_tree.left.pivot[0]]))
+            if model_tree.left.pivot is not None
+            else len(left_data)
+        )
         G.add_node(
             f"{model_tree.left.node}_{left_id}{post_fix}",
             depth=model_tree.left.depth,
@@ -172,15 +177,20 @@ def construct_graph(
             interval=model_tree.left.interval,
             pivot_c=model_tree.left.pivot_c,
             samples_remaining=len(left_data),
+            n_unique=n_unique,
         )
         G.add_edge(
             f"{current_node}_{current_id}_{depth}", f"{model_tree.left.node}_{left_id}{post_fix}"
         )
         G = construct_graph(model_tree.left, G, left_data, left_id)
     if model_tree.right is not None:
-        right_id = str(uuid.uuid4().fields[-1])[-5:]
+        right_id = str(uuid.uuid4().fields[-1])[-6:]
         post_fix = f"_{model_tree.right.depth}" if model_tree.right.depth is not None else ""
-
+        n_unique = (
+            len(np.unique(right_data[:, model_tree.right.pivot[0]]))
+            if model_tree.right.pivot is not None
+            else len(right_data)
+        )
         G.add_node(
             f"{model_tree.right.node}_{right_id}{post_fix}",
             depth=model_tree.right.depth,
@@ -190,6 +200,7 @@ def construct_graph(
             interval=model_tree.right.interval,
             pivot_c=model_tree.right.pivot_c,
             samples_remaining=len(right_data),
+            n_unique=n_unique,
         )
         G.add_edge(
             f"{current_node}_{current_id}_{depth}", f"{model_tree.right.node}_{right_id}{post_fix}"

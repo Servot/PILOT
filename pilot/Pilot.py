@@ -16,8 +16,9 @@ from .Tree import tree
 
 from sklearn.base import BaseEstimator
 
-NODE_PREFERENCE_ORDER = ["con", "lin", "blin", "pcon", "plin", "pconc"]
-DEFAULT_DF_SETTINGS = {"con": 1, "lin": 2, "blin": 5, "pcon": 5, "plin": 2, "pconc": 5}
+REGRESSION_NODES = ["con", "lin", "blin", "pcon", "plin"]
+NODE_PREFERENCE_ORDER = REGRESSION_NODES + ["pconc"]
+DEFAULT_DF_SETTINGS = {"con": 1, "lin": 2, "blin": 5, "pcon": 5, "plin": 7, "pconc": 5}
 
 
 @nb.njit()
@@ -527,6 +528,7 @@ class PILOT(BaseEstimator):
         truncation_factor: int = 3,
         rel_tolerance: float = 0,
         df_settings: dict[str, int] | None = None,
+        regression_nodes: list[str] | None = None,
     ) -> None:
         """
         Here we input model parameters to build a tree,
@@ -552,17 +554,19 @@ class PILOT(BaseEstimator):
         truncation_factor: float,
             By default, predictions are truncated at [-3B, 3B] where B = y_max = -y_min for centered data.
             The multiplyer (3 by default) can be adapted.
-        df_settings:
-            Mapping from regression node type to the number of degrees of freedom for that node type.
         rel_tolerance: float,
             Minimum percentage decrease in RSS in order for a linear node to be added (if 0, there is no restriction on the number of linear nodes).
             Used to avoid recursion errors.
+        df_settings:
+            Mapping from regression node type to the number of degrees of freedom for that node type.
+        regression_nodes:
+            List of node types to consider for numerical features. If None, all available regression nodes are considered
         """
 
         # initialize class attributes
         self.max_depth = max_depth
         self.split_criterion = split_criterion
-        self.regression_nodes = ["con", "lin", "blin", "pcon", "plin"]
+        self.regression_nodes = REGRESSION_NODES if regression_nodes is None else regression_nodes
         self.min_sample_split = min_sample_split
         self.min_sample_leaf = min_sample_leaf
         self.step_size = step_size
@@ -592,7 +596,7 @@ class PILOT(BaseEstimator):
         ]
 
         # degrees of freedom for each regression node
-        self.k = DEFAULT_DF_SETTINGS
+        self.k = DEFAULT_DF_SETTINGS.copy()
         if df_settings is not None:
             self.k.update(df_settings)
 
@@ -683,7 +687,6 @@ class PILOT(BaseEstimator):
 
         # build tree only if it doesn't meet the stop_criterion
         if self.stop_criterion(tree_depth, self.y[indices]):
-
             # define a new node
             # best_feature should - 1 because the 1st column is the indices
             node = tree(
@@ -896,7 +899,6 @@ class PILOT(BaseEstimator):
             t = model
             y_hat_one = 0
             while t.node != "END" and t.depth < maxd:
-
                 if t.node == "pconc":
                     if np.isin(X[row, t.pivot[0]], t.pivot_c):
                         y_hat_one += self.step_size * (t.lm_l[1])
