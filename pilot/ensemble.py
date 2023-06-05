@@ -20,6 +20,7 @@ class RandomForestPilot(BaseEstimator):
         rel_tolerance: float = 0,
         df_settings: dict[str, int] | None = None,
         regression_nodes: list[str] | None = None,
+        min_unique_values_regression: int = 5,
     ):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
@@ -33,6 +34,7 @@ class RandomForestPilot(BaseEstimator):
         self.rel_tolerance = rel_tolerance
         self.df_settings = df_settings
         self.regression_nodes = regression_nodes
+        self.min_unique_values_regression = min_unique_values_regression
 
     def fit(self, X, y, categorical_idx=np.array([-1]), n_workers: int = 1):
         self.estimators = [
@@ -46,6 +48,7 @@ class RandomForestPilot(BaseEstimator):
                 rel_tolerance=self.rel_tolerance,
                 df_settings=self.df_settings,
                 regression_nodes=self.regression_nodes,
+                min_unique_values_regression=self.min_unique_values_regression,
             )
             for _ in range(self.n_estimators)
         ]

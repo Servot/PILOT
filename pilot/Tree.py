@@ -131,8 +131,12 @@ def _get_child_data(training_data, model_tree):
     left_data = training_data.copy()
     right_data = training_data.copy()
     if model_tree.node == "pconc":
-        left_data = training_data[training_data[:, model_tree.pivot[0]].isin(model_tree.pivot_c)]
-        right_data = training_data[~training_data[:, model_tree.pivot[0]].isin(model_tree.pivot_c)]
+        left_data = training_data[
+            np.isin(training_data[:, model_tree.pivot[0]], model_tree.pivot_c)
+        ]
+        right_data = training_data[
+            ~np.isin(training_data[:, model_tree.pivot[0]], model_tree.pivot_c)
+        ]
 
     elif model_tree.node in ["plin", "pcon", "blin"]:
         left_data = training_data[training_data[:, model_tree.pivot[0]] <= model_tree.pivot[1]]

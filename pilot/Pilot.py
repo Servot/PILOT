@@ -107,7 +107,8 @@ def loss_fun(criteria, num, Rss, k: np.ndarray):
         nb.int64[:],  # k_split_nodes
         nb.int64[:],  # k_pconc
         nb.int64[:],  # categorical
-        nb.int64,  # max_features_considered
+        nb.int64,  # max_features_considered,
+        nb.int64,  # min_unique_values_regression
     ),
     nopython=True,
 )
@@ -126,6 +127,7 @@ def best_split(
     k_pconc,
     categorical,
     max_features_considered,
+    min_unique_values_regression,
 ):
     """
     This function finds the best split as well as the linear
@@ -157,6 +159,10 @@ def best_split(
         degrees of freedom for each regression node
     categorical: ndarray,
         1D int array, the columns of categorical variable, array.
+    max_features_considered: int
+        number of features to consider for each split (randomly sampled)
+    min_unique_values_regression: int
+        minimum number of unique values necessary to consider a linear node
 
     returns:
     --------
@@ -257,7 +263,7 @@ def best_split(
                     lm_L = np.array([coef_con, intercept_con])
 
             # LIN:
-            if "lin" in regression_nodes and lenp >= 5:
+            if "lin" in regression_nodes and lenp >= min_unique_values_regression:
                 var = num[1] * Moments[1, 1] - Moments[1, 0] ** 2
                 # in case a constant feature
                 if var == 0:
@@ -341,7 +347,7 @@ def best_split(
                     if (
                         pivot != possible_p[0]
                         and p >= 1
-                        and lenp >= 5
+                        and lenp >= min_unique_values_regression
                         and np.linalg.det(XtX) > 0.001
                         and num[0] + X_add.shape[0] >= min_sample_leaf
                         and num[1] - X_add.shape[0] >= min_sample_leaf
@@ -382,8 +388,11 @@ def best_split(
                 # 'plin' for the first split candidate is equivalent to 'pcon'
                 if (
                     "plin" in regression_nodes
-                    and p >= 4
-                    and lenp - p >= 5
+                    and p
+                    >= min_unique_values_regression
+                    - 1  # number of unique values smaller than current value
+                    and lenp - p
+                    >= min_unique_values_regression  # number of unique values larger than current value
                     and 0 not in num * Moments[:, 1] - Moments[:, 0] ** 2
                 ):
                     # coef and intercept are vectors of dimension 1
@@ -529,6 +538,7 @@ class PILOT(BaseEstimator):
         rel_tolerance: float = 0,
         df_settings: dict[str, int] | None = None,
         regression_nodes: list[str] | None = None,
+        min_unique_values_regression: float = 5,
     ) -> None:
         """
         Here we input model parameters to build a tree,
@@ -573,6 +583,7 @@ class PILOT(BaseEstimator):
         self.random_state = random_state
         self.truncation_factor = truncation_factor
         self.rel_tolerance = rel_tolerance
+        self.min_unique_values_regression = min_unique_values_regression
 
         # attributes used for fitting
         self.X = None
@@ -675,6 +686,7 @@ class PILOT(BaseEstimator):
             self.k_pconc,
             self.categorical,
             self.max_features_considered,
+            self.min_unique_values_regression,
         )  # find the best split
         # stop fitting the tree
         if best_node == "":
