@@ -429,7 +429,7 @@ def best_split(
 
                 if ~np.isnan(loss).all() and (best_node == "" or np.nanmin(loss) < best_loss):
                     best_loss = np.nanmin(loss)
-                    index_min = np.where(loss == best_loss)[0].item()
+                    index_min = np.where(loss == best_loss)[0][0]
                     add_index = 1 * ("lin" in regression_nodes) + 1 * ("con" in regression_nodes)
                     best_node = regression_nodes[add_index + index_min]
                     best_feature = feature_id  # asigned but will not be used for 'lin'
@@ -806,7 +806,7 @@ class PILOT(BaseEstimator):
         y,
         categorical=np.array([-1]),
         max_features_considered: Optional[int] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         This function is used for model fitting. It should return
